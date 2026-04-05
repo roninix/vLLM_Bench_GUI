@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>vLLM Benchmark</title>
+<link rel="stylesheet" href="/static/style.css" />
+<script src="/static/vendor/alpine.min.js"></script>
+<script src="/static/vendor/chart.min.js" defer></script>
+<script src="/static/vendor/chartjs-plugin-annotation.min.js" defer></script>
+<script src="/static/app.js"></script>
+</head>
+<body x-data="app" x-init="init()">
+
+<!-- Toast notifications -->
+<div class="toast-container">
+  <template x-for="(toast, i) in toasts" :key="i">
+    <div class="toast" :class="'toast-' + toast.type" x-show="toast.show" x-transition>
+      <span x-text="toast.message"></span>
+      <button class="toast-close" @click="toast.show = false">&times;</button>
+    </div>
+  </template>
+</div>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-left">
+    <span class="logo"><span class="logo-icon">⚡</span> vLLM Benchmark</span>
+  </div>
+  <div class="header-center">
+    <template x-for="s in recentServers" :key="s.alias">
+      <span class="server-pill" :class="s.last_ping_ok === 1 ? 'pill-ok' : (s.last_ping_ok === 0 ? 'pill-fail' : 'pill-none')">
+        <span class="pill-dot"></span>
+        <span x-text="s.alias"></span>
+      </span>
+    </template>
+  </div>
+  <div class="header-right">
+    <button class="theme-toggle" @click="toggleTheme()" title="Toggle theme">
+      <svg class="theme-icon-moon" x-show="currentTheme === 'dark'" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.408 5.408 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1a8.984 8.984 0 0 1 8.92 6.64c.1.45.14.91.1 1.36a9 9 0 0 1-9 9 9 9 0 0 1-6.36-2.64A8.984 8.984 0 0 1 12 3Z"/></svg>
+      <svg class="theme-icon-sun" x-show="currentTheme === 'light'" viewBox="0 0 24 24" fill="currentColor"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM0 12a1 1 0 0 1 1-1h2a1 1 0 0 1 0 2H1a1 1 0 0 1-1-1Zm21 0a1 1 0 0 1 1-1h1a1 1 0 0 1 0 2h-1a1 1 0 0 1-1-1ZM5.64 5.64a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.41 1.41l-.71-.71a1 1 0 0 1 0-1.41Zm11.61 11.61a1 1 0 0 1 1.41 0l.71.71a1 1 0 0 1-1.41 1.41l-.71-.71a1 1 0 0 1 0-1.41Zm0-11.61.71.71a1 1 0 0 1-1.41 1.41l-.71-.71a1 1 0 0 1 1.41-1.41ZM5.64 18.36a1 1 0 0 1 0-1.41l.71-.71a1 1 0 1 1 1.41 1.41l-.71.71a1 1 0 0 1-1.41 0ZM12 23a1 1 0 0 1-1-1v-2a1 1 0 0 1 2 0v2a1 1 0 0 1-1 1ZM12 0a1 1 0 0 1-1 1v2a1 1 0 0 1 2 0V1a1 1 0 0 1-1-1Z"/></svg>
+    </button>
+    <button class="btn-icon" @click="showSettings = true" title="Settings">⚙</button>
+  </div>
+</header>
+
+<!-- NAV TABS -->
+<nav class="nav-tabs">
+  <button :class="['tab-btn', {active: activeTab === 'servers'}]" @click="switchTab('servers')">Servers</button>
+  <button :class="['tab-btn', {active: activeTab === 'benchmark'}]" @click="switchTab('benchmark')">Benchmark</button>
+  <button :class="['tab-btn', {active: activeTab === 'history'}]" @click="switchTab('history')">History</button>
+  <button :class="['tab-btn', {active: activeTab === 'compare'}]" @click="switchTab('compare')">Compare</button>
+  <button :class="['tab-btn', {active: activeTab === 'backup'}]" @click="switchTab('backup')">Backup</button>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main class="content">
+
+  <!-- ════════ SERVERS TAB ════════ -->
+  <div x-show="activeTab === 'servers'" x-cloak>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Servers</h2>
+        <div class="btn-group">
+          <button class="btn btn-primary" @click="openServerDialog()">
+            <span>+</span> Add Server
+          </button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="servers.length === 0" class="empty-state">
+        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">🌍</div>
+        <p>No servers added yet.</p>
+        <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 20px;">Add your vLLM server to start benchmarking.</p>
+        <button class="btn btn-primary" @click="openServerDialog()">+ Add your first vLLM server</button>
+      </div>
+
+      <!-- Server list -->
+      <div class="server-list">
+        <template x-for="s in servers" :key="s.alias">
+          <div class="server-card">
+            <div class="server-info">
+              <span class="status-dot" :class="s.last_ping_ok === 1 ? 'dot-green' : (s.last_ping_ok === 0 ? 'dot-red' : 'dot-gray')"></span>
+              <div>
+                <span class="server-alias" x-text="s.alias"></span>
+                <span class="server-host" x-show="s.host" x-text="' · ' + s.host + ':' + s.port"></span>
+              </div>
+              <span class="server-tags" x-show="s.tags" x-text="s.tags"></span>
+            </div>
+            <div class="server-meta">
+              <span class="server-run-count" x-text="(s.run_count || 0) + ' runs'"></span>
+              <span class="server-last-run" x-show="s.last_run" x-text="'Last: ' + s.last_run"></span>
+            </div>
+            <div class="server-actions">
+              <button class="btn btn-sm" @click="openServerDialog(s)">Edit</button>
+              <button class="btn btn-sm btn-danger" @click="confirmDeleteServer(s)">Delete</button>
+              <button class="btn btn-sm" @click="pingServer(s)">Ping</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ BENCHMARK TAB ════════ -->
+  <div x-show="activeTab === 'benchmark'" x-cloak>
+    <!-- Server & Model -->
+    <div class="panel">
+      <div class="panel-header"><h2>Server & Model</h2></div>
+      <div class="form-row">
+        <label>Server
+          <select x-model="bench.server_alias" @change="fetchModels()">
+            <option value="">— select server —</option>
+            <template x-for="s in servers" :key="s.alias">
+              <option :value="s.alias" x-text="s.alias"></option>
+            </template>
+          </select>
+        </label>
+        <label>Model
+          <select x-model="bench.model">
+            <option value="">— fetch first —</option>
+            <template x-for="m in bench.models" :key="m">
+              <option :value="m" x-text="m"></option>
+            </template>
+          </select>
+        </label>
+        <button class="btn" @click="fetchModels()" :disabled="!bench.server_alias">
+          <span>🔄</span> Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Parameters -->
+    <div class="panel">
+      <div class="panel-header"><h2>PARAMETERS</h2></div>
+      <div class="param-section">
+        <label class="param-label"><span>Concurrency</span></label>
+        <div class="chip-group">
+          <template x-for="c in [1,2,4,8,12]" :key="c">
+            <label class="chip">
+              <input type="checkbox" :value="c" x-model="bench.concurrency_levels" />
+              <span x-text="c"></span>
+            </label>
+          </template>
+          <input type="number" class="input-sm" x-model.number="bench.custom_concurrency" placeholder="Custom" min="1" :max="maxConcurrencyCap"
+                 @change="addCustomConcurrency()" />
+        </div>
+      </div>
+      <div class="param-section">
+        <label class="param-label"><span>Prompts</span></label>
+        <div class="chip-group">
+          <label class="chip"><input type="checkbox" value="short" x-model="bench.prompt_keys" /><span>Short (~50)</span></label>
+          <label class="chip"><input type="checkbox" value="medium" x-model="bench.prompt_keys" /><span>Medium (~512)</span></label>
+          <label class="chip"><input type="checkbox" value="long" x-model="bench.prompt_keys" /><span>Long (~2K)</span></label>
+          <label class="chip"><input type="checkbox" value="coding" x-model="bench.prompt_keys" /><span>Code (~1K)</span></label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Requests/level
+          <input type="number" x-model.number="bench.num_requests" min="1" max="100" class="input-md" />
+        </label>
+        <label>Temperature
+          <input type="number" x-model.number="bench.temperature" min="0" max="2" step="0.1" class="input-md" />
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" x-model="bench.quick_mode" />
+          Quick mode
+        </label>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Run</h2>
+        <div class="run-actions">
+          <button class="btn btn-primary" @click="startBenchmark()" :disabled="benchRunning || !bench.server_alias || !bench.model">
+            <span>▶</span> Start Benchmark
+          </button>
+          <button class="btn btn-danger" @click="stopBenchmark()" :disabled="!benchRunning">
+            <span>⏹</span> Stop
+          </button>
+        </div>
+      </div>
+
+      <!-- Progress bars -->
+      <div class="progress-list">
+        <template x-for="key in benchProgressKeys()" :key="key">
+          <div class="progress-item">
+            <span class="progress-label" x-text="key"></span>
+            <div class="progress-bar-container">
+              <div class="progress-bar" :style="'width: ' + getProgress(key).pct + '%'"></div>
+            </div>
+            <span class="progress-detail" x-text="getProgress(key).text"></span>
+            <span class="progress-toks" x-show="getProgress(key).toks" x-text="getProgress(key).toks + ' tok/s'"></span>
+          </div>
+        </template>
+      </div>
+
+      <!-- Live results -->
+      <div class="results-table-wrap" x-show="benchResults.length > 0">
+        <h3 style="margin: 0 0 12px; color: var(--text-primary);">Live Results</h3>
+        <table class="results-table">
+          <thead>
+            <tr><th>Prompt</th><th>Conc</th><th>Tok/s</th><th>Avg Lat</th><th>P95 Lat</th><th>TTFT</th><th>OK/N</th><th></th></tr>
+          </thead>
+          <tbody>
+            <template x-for="r in benchResults" :key="r.prompt_key + '_' + r.concurrency">
+              <tr>
+                <td x-text="r.prompt_key"></td>
+                <td x-text="r.concurrency"></td>
+                <td class="mono-val" x-text="r.throughput_tok_s?.toFixed(1)"></td>
+                <td class="mono-val" x-text="(r.avg_latency_ms||0).toFixed(0) + 'ms'"></td>
+                <td class="mono-val" x-text="(r.p95_latency_ms||0).toFixed(0) + 'ms'"></td>
+                <td class="mono-val" x-text="(r.avg_ttft_ms||0).toFixed(0) + 'ms'"></td>
+                <td><span class="status-badge" :class="r.success_count === r.total_count ? 'status-done' : 'status-warn'">OK: <span x-text="r.success_count + '/' + r.total_count"></span></span></td>
+                <td><span class="status-ok" x-show="r.success_count === r.total_count">✓</span><span class="status-warn" x-show="r.success_count < r.total_count">⚠</span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Peak display -->
+      <div class="peak-display" x-show="benchDone">
+        <span>Peak throughput:</span>
+        <span class="mono-lg" x-text="peakTokS.toFixed(1) + ' tok/s'"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ HISTORY TAB ════════ -->
+  <div x-show="activeTab === 'history'" x-cloak>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>History</h2>
+        <div class="btn-group filter-row">
+          <label>Server
+            <select x-model="historyFilter.server">
+              <option value="">all</option>
+              <template x-for="s in servers" :key="s.alias">
+                <option :value="s.alias" x-text="s.alias"></option>
+              </template>
+            </select>
+          </label>
+          <button class="btn btn-primary" @click="loadHistory()">Search</button>
+          <button class="btn btn-danger" @click="deleteSelectedHistory()" :disabled="selectedHistoryRuns.length === 0">
+            <span>🗑</span> Delete Selected (<span x-text="selectedHistoryRuns.length"></span>)
+          </button>
+        </div>
+      </div>
+
+      <div x-show="historyRuns.length === 0" class="empty-state">
+        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📊</div>
+        <p>No benchmark runs yet.</p>
+        <p style="color: var(--text-secondary); font-size: 14px;">Run a benchmark to see results here.</p>
+      </div>
+
+      <table class="results-table" x-show="historyRuns.length > 0">
+        <thead>
+          <tr>
+            <th style="width: 40px;">
+              <label class="checkbox-label" style="cursor: pointer;">
+                <input type="checkbox" x-model="selectAllHistory" @change="toggleAllHistory($event)" />
+              </label>
+            </th>
+            <th>Timestamp</th><th>Server</th><th>Model</th><th>Peak tok/s</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="run in historyRuns" :key="run.run_id">
+            <tr class="history-row-main" :class="selectedHistoryRuns.includes(run.run_id) ? 'selected-row' : ''" @click="toggleHistorySelect(run.run_id)">
+              <td>
+                <label class="checkbox-label" style="cursor: pointer; margin: 0;">
+                  <input type="checkbox" :value="run.run_id" x-model="selectedHistoryRuns" @click.stop />
+                </label>
+              </td>
+              <td><span x-text="formatTimestamp(run.timestamp)"></span></td>
+              <td><span x-text="run.server_alias"></span></td>
+              <td><span x-text="run.model"></span></td>
+              <td class="mono-val" x-text="run.peak_tok_s?.toFixed(1) || '—'"></td>
+              <td><span :class="'status-badge status-' + run.status" x-text="run.status"></span></td>
+              <td><button class="btn btn-sm" @click.stop="loadHistoryDetail(run.run_id)">Details</button></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+
+      <!-- Expanded detail -->
+      <div class="history-detail" x-show="historyDetail">
+        <div class="panel panel-inset">
+          <div class="panel-header">
+            <h3>Run Detail — <span x-text="(historyDetail?.run_id || '').substring(0,8)"></span></h3>
+            <div class="btn-group">
+              <button class="btn btn-sm" @click="exportRun(historyDetail.run_id)">Export JSON</button>
+              <button class="btn btn-sm btn-danger" @click="deleteRun(historyDetail.run_id)">Delete</button>
+              <button class="btn btn-sm" @click="historyDetail = null">Close</button>
+            </div>
+          </div>
+
+          <!-- Charts -->
+          <div class="charts-grid">
+            <div class="chart-wrap"><div class="chart-title">Throughput vs Concurrency</div><canvas id="chart-throughput"></canvas></div>
+            <div class="chart-wrap"><div class="chart-title">Latency vs Concurrency</div><canvas id="chart-latency"></canvas></div>
+            <div class="chart-wrap"><div class="chart-title">TTFT vs Concurrency</div><canvas id="chart-ttft"></canvas></div>
+          </div>
+
+          <!-- Detail results table -->
+          <table class="results-table" x-show="historyDetail?.results?.length">
+            <thead>
+              <tr>
+                <th>Prompt</th><th>Conc</th><th>Tok/s</th><th>Avg Lat</th><th>P50 Lat</th><th>P95 Lat</th><th>TTFT</th><th>OK/N</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="r in historyDetail.results" :key="r.id">
+                <tr>
+                  <td x-text="r.prompt_key"></td>
+                  <td x-text="r.concurrency"></td>
+                  <td class="mono-val" x-text="r.throughput_tok_s?.toFixed(1)"></td>
+                  <td class="mono-val" x-text="(r.avg_latency_ms||0).toFixed(0)+'ms'"></td>
+                  <td class="mono-val" x-text="(r.p50_latency_ms||0).toFixed(0)+'ms'"></td>
+                  <td class="mono-val" x-text="(r.p95_latency_ms||0).toFixed(0)+'ms'"></td>
+                  <td class="mono-val" x-text="(r.avg_ttft_ms||0).toFixed(0)+'ms'"></td>
+                  <td><span class="status-badge status-done" x-text="(r.success_count||0)+'/'+(r.total_count||0)"></span></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ COMPARE TAB ════════ -->
+  <div x-show="activeTab === 'compare'" x-cloak>
+    <div class="panel">
+      <div class="form-row">
+        <label>Mode
+          <select x-model="compareMode">
+            <option value="two-server">Two servers</option>
+            <option value="single-history">Single-server history</option>
+          </select>
+        </label>
+        <div class="btn-group" x-show="compareMode === 'two-server'">
+          <button class="btn btn-primary" @click="runCompare()" :disabled="!canCompare">Compare</button>
+        </div>
+      </div>
+
+      <!-- Two server mode -->
+      <div x-show="compareMode === 'two-server'" class="form-row">
+        <label>Server A
+          <select x-model="compare.serverA" @change="loadCompareRuns('A')">
+            <option value="">— select —</option>
+            <template x-for="s in servers" :key="s.alias">
+              <option :value="s.alias" x-text="s.alias"></option>
+            </template>
+          </select>
+        </label>
+        <label>Run A
+          <select x-model="compare.runA">
+            <option value="">— select run —</option>
+            <template x-for="r in compare.runsA" :key="r.run_id">
+              <option :value="r.run_id" x-text="formatTimestamp(r.timestamp)"></option>
+            </template>
+          </select>
+        </label>
+        <label>Server B
+          <select x-model="compare.serverB" @change="loadCompareRuns('B')">
+            <option value="">— select —</option>
+            <template x-for="s in servers" :key="s.alias">
+              <option :value="s.alias" x-text="s.alias"></option>
+            </template>
+          </select>
+        </label>
+        <label>Run B
+          <select x-model="compare.runB">
+            <option value="">— select run —</option>
+            <template x-for="r in compare.runsB" :key="r.run_id">
+              <option :value="r.run_id" x-text="formatTimestamp(r.timestamp)"></option>
+            </template>
+          </select>
+        </label>
+      </div>
+
+      <!-- Compare controls -->
+      <div class="form-row">
+        <label>Metric
+          <select x-model="compare.metric">
+            <option value="throughput_tok_s">Throughput (tok/s)</option>
+            <option value="avg_latency_ms">Avg Latency</option>
+            <option value="p95_latency_ms">P95 Latency</option>
+            <option value="avg_ttft_ms">TTFT</option>
+          </select>
+        </label>
+        <label>Prompt
+          <select x-model="compare.prompt_key">
+            <option value="short">Short</option>
+            <option value="medium">Medium</option>
+            <option value="long">Long</option>
+            <option value="coding">Coding</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" @click="runCompare()" :disabled="!canCompare">
+          <span>📊</span> Compare
+        </button>
+      </div>
+
+      <!-- Delta table -->
+      <table class="results-table" x-show="compareResult.rows?.length">
+        <thead>
+          <tr><th>Concurrency</th><th x-text="compareResult.server_a_alias">A</th><th x-text="compareResult.server_b_alias">B</th><th>Δ</th><th>Δ %</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="row in compareResult.rows" :key="row.concurrency">
+            <tr>
+              <td x-text="row.concurrency"></td>
+              <td class="mono-val" x-text="row.value_a?.toFixed(1) || '—'"></td>
+              <td class="mono-val" x-text="row.value_b?.toFixed(1) || '—'"></td>
+              <td class="mono-val" :class="row.delta > 0 ? 'delta-pos' : (row.delta < 0 ? 'delta-neg' : '')" x-text="row.delta != null ? (row.delta > 0 ? '+' : '') + row.delta.toFixed(1) : '—'"></td>
+              <td class="mono-val" :class="row.delta_pct > 0 ? 'delta-pos' : (row.delta_pct < 0 ? 'delta-neg' : '')" x-text="row.delta_pct != null ? (row.delta_pct > 0 ? '+' : '') + row.delta_pct.toFixed(1) + '%' : '—'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+
+      <!-- Compare chart -->
+      <div class="chart-wrap chart-wide" x-show="compareResult.rows?.length">
+        <div class="chart-title">Comparison by Concurrency</div>
+        <canvas id="chart-compare"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ BACKUP TAB ════════ -->
+  <div x-show="activeTab === 'backup'" x-cloak>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Create Backup</h2>
+        <button class="btn btn-primary" @click="createBackup()" :disabled="backupCreating">
+          <span>📦</span> Create Backup Now
+        </button>
+      </div>
+      <p class="muted">Includes bench.db + settings</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Existing Backups</h2></div>
+      <div x-show="backups.length === 0" class="empty-state">
+        <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.5;">📦</div>
+        <p>No backups yet.</p>
+        <p style="color: var(--text-secondary); font-size: 14px;">Create a backup to see it here.</p>
+      </div>
+      <table class="results-table" x-show="backups.length > 0">
+        <thead>
+          <tr><th>Filename</th><th>Size</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="b in backups" :key="b.filename">
+            <tr>
+              <td><span x-text="b.filename"></span></td>
+              <td><span x-text="(b.size_bytes / 1024).toFixed(0) + ' KB'"></span></td>
+              <td><span x-text="b.created_at"></span></td>
+              <td>
+                <a :href="'/api/backup/' + b.filename" class="btn btn-sm" download>⬇</a>
+                <button class="btn btn-sm btn-danger" @click="deleteBackup(b.filename)">Delete</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Restore</h2></div>
+      <div class="form-row">
+        <input type="file" x-ref="restoreFile" accept=".zip" />
+        <button class="btn btn-danger" @click="restoreBackup()">
+          <span>⬆</span> Upload &amp; Restore
+        </button>
+      </div>
+      <div class="alert-warning">
+        <strong>⚠ Warning:</strong> Restoring replaces the current database and settings.
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ════════ SERVER DIALOG ════════ -->
+<div class="modal-overlay" x-show="showServerDialog" x-cloak @keydown.escape.window="showServerDialog = false">
+  <div class="modal" @click.outside="showServerDialog = false">
+    <div class="modal-header">
+      <h3 x-text="serverForm.editing ? 'Edit Server' : 'Add Server'"></h3>
+      <button class="modal-close" @click="showServerDialog = false">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Alias <span class="required">*</span></label>
+        <input type="text" x-model="serverForm.alias" :disabled="serverForm.editing" placeholder="unique-name, no spaces" />
+      </div>
+      <div class="form-group">
+        <label>Host <span class="required">*</span></label>
+        <input type="text" x-model="serverForm.host" placeholder="192.168.1.22" />
+      </div>
+      <div class="form-group">
+        <label>Port <span class="required">*</span></label>
+        <input type="number" x-model.number="serverForm.port" placeholder="8000" />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" x-model="serverForm.description" placeholder="Hardware notes (e.g., NVIDIA GB10)" />
+      </div>
+      <div class="form-group">
+        <label>Color</label>
+        <input type="color" x-model="serverForm.color" class="color-input" />
+      </div>
+      <div class="form-group">
+        <label>Tags</label>
+        <input type="text" x-model="serverForm.tags" placeholder="local, blackwell, production" />
+      </div>
+
+      <!-- Test connection -->
+      <div class="test-result" x-show="serverForm.testResult" :class="serverForm.testResult.includes('✓') ? 'test-success' : 'test-fail'">
+        <span x-text="serverForm.testResult"></span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" @click="testConnection()" :disabled="!serverForm.host || !serverForm.port">Test Connection</button>
+      <div class="modal-actions">
+        <button class="btn" @click="showServerDialog = false">Cancel</button>
+        <button class="btn btn-primary" @click="saveServer()" :disabled="!serverForm.alias || !serverForm.host || !serverForm.port">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ DELETE SERVER CONFIRM ════════ -->
+<div class="modal-overlay" x-show="showDeleteConfirm" x-cloak>
+  <div class="modal modal-sm" @click.outside="showDeleteConfirm = false">
+    <div class="modal-body">
+      <div class="alert-warning" style="margin-bottom: 16px;">
+        <strong>⚠ Warning:</strong> "<strong x-text="deleteTarget?.alias"></strong>" has <strong x-text="deleteTarget?.run_count || 0"></strong> benchmark runs. Deleting it will also delete all associated results.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" @click="showDeleteConfirm = false">Cancel</button>
+      <button class="btn btn-danger" @click="deleteServer()">Delete server + results</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ SETTINGS MODAL ════════ -->
+<div class="modal-overlay" x-show="showSettings" x-cloak @keydown.escape.window="showSettings = false">
+  <div class="modal" @click.outside="showSettings = false">
+    <div class="modal-header">
+      <h3>Settings</h3>
+      <button class="modal-close" @click="showSettings = false">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>App Port (requires restart)</label>
+        <input type="number" x-model.number="settings.app_port" />
+      </div>
+      <div class="form-group">
+        <label>Request Timeout (seconds)</label>
+        <input type="number" x-model.number="settings.request_timeout_s" />
+      </div>
+      <div class="form-group">
+        <label>Max Concurrency Cap</label>
+        <input type="number" x-model.number="settings.max_concurrency_cap" />
+      </div>
+      <div class="form-group">
+        <label>Backup Keep N (max files)</label>
+        <input type="number" x-model.number="settings.backup_keep_n" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" @click="showSettings = false">Cancel</button>
+      <button class="btn btn-primary" @click="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
