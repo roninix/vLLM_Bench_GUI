@@ -17,6 +17,13 @@ A locally-hosted web application for benchmarking vLLM inference servers. Manage
 - **Cross-Server Compare** — Delta table and grouped bar chart comparing any two runs from any two servers
 - **Backup / Restore** — Timestamped ZIP backups of the SQLite database and settings
 - **Zero external dependencies at runtime** — All CDN assets (Alpine.js, Chart.js) are vendored on first startup and served locally
+<img width="1462" height="1154" alt="image" src="https://github.com/user-attachments/assets/9dec4c6c-e600-4b9b-90ba-9923c9debc36" />
+
+<img width="1457" height="1218" alt="image" src="https://github.com/user-attachments/assets/648819c4-26ac-4713-af98-d1b642f39bbb" />
+
+<img width="1457" height="1218" alt="image" src="https://github.com/user-attachments/assets/8cd4d93a-21e9-4177-ab9b-f485fbb42f5b" />
+
+
 
 ---
 
