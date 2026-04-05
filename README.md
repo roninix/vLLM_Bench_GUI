@@ -127,6 +127,8 @@ The server status dot shows: 🟢 reachable, 🔴 unreachable, ⚪ never pinged.
    - Full results table
    - Export JSON / Delete run buttons
 
+**Bulk Delete:** Select multiple runs with checkboxes and click "Delete Selected" to remove them at once.
+
 ### 4. Compare Runs
 
 1. Navigate to the **Compare** tab
@@ -231,6 +233,7 @@ Base URL: `http://localhost:7842/api`
 | GET    | `/results`                 | List runs (filter: server, limit, offset) |
 | GET    | `/results/{run_id}`        | Full run detail + all results  |
 | DELETE | `/results/{run_id}`        | Delete a run                   |
+| DELETE | `/results`                 | Delete multiple runs (body: `{"run_ids": [...]}`) |
 | GET    | `/results/{run_id}/export` | Download run as JSON           |
 | GET    | `/results/compare`         | Compare two runs → delta data  |
 
