@@ -150,10 +150,12 @@
       <div class="param-section">
         <label class="param-label"><span>Prompts</span></label>
         <div class="chip-group">
-          <label class="chip"><input type="checkbox" value="short" x-model="bench.prompt_keys" /><span>Short (~50)</span></label>
-          <label class="chip"><input type="checkbox" value="medium" x-model="bench.prompt_keys" /><span>Medium (~512)</span></label>
-          <label class="chip"><input type="checkbox" value="long" x-model="bench.prompt_keys" /><span>Long (~2K)</span></label>
-          <label class="chip"><input type="checkbox" value="coding" x-model="bench.prompt_keys" /><span>Code (~1K)</span></label>
+          <template x-for="p in availablePrompts" :key="p.key">
+            <label class="chip" x-show="p.key !== 'custom'">
+              <input type="checkbox" :value="p.key" x-model="bench.prompt_keys" />
+              <span x-text="p.label"></span>
+            </label>
+          </template>
         </div>
       </div>
       <div class="form-row">
@@ -336,101 +338,126 @@
   <!-- ════════ COMPARE TAB ════════ -->
   <div x-show="activeTab === 'compare'" x-cloak>
     <div class="panel">
-      <div class="form-row">
-        <label>Mode
-          <select x-model="compareMode">
-            <option value="two-server">Two servers</option>
-            <option value="single-history">Single-server history</option>
-          </select>
-        </label>
-        <div class="btn-group" x-show="compareMode === 'two-server'">
-          <button class="btn btn-primary" @click="runCompare()" :disabled="!canCompare">Compare</button>
+      <div class="panel-header">
+        <h2>Compare Runs</h2>
+        <div class="btn-group">
+          <button class="btn btn-primary" @click="runCompare()" :disabled="!canCompare">
+            <span>📊</span> Compare
+          </button>
         </div>
       </div>
 
-      <!-- Two server mode -->
-      <div x-show="compareMode === 'two-server'" class="form-row">
-        <label>Server A
-          <select x-model="compare.serverA" @change="loadCompareRuns('A')">
-            <option value="">— select —</option>
-            <template x-for="s in servers" :key="s.alias">
-              <option :value="s.alias" x-text="s.alias"></option>
-            </template>
-          </select>
-        </label>
-        <label>Run A
-          <select x-model="compare.runA">
-            <option value="">— select run —</option>
-            <template x-for="r in compare.runsA" :key="r.run_id">
-              <option :value="r.run_id" x-text="formatTimestamp(r.timestamp)"></option>
-            </template>
-          </select>
-        </label>
-        <label>Server B
-          <select x-model="compare.serverB" @change="loadCompareRuns('B')">
-            <option value="">— select —</option>
-            <template x-for="s in servers" :key="s.alias">
-              <option :value="s.alias" x-text="s.alias"></option>
-            </template>
-          </select>
-        </label>
-        <label>Run B
-          <select x-model="compare.runB">
-            <option value="">— select run —</option>
-            <template x-for="r in compare.runsB" :key="r.run_id">
-              <option :value="r.run_id" x-text="formatTimestamp(r.timestamp)"></option>
-            </template>
-          </select>
-        </label>
-      </div>
-
-      <!-- Compare controls -->
-      <div class="form-row">
-        <label>Metric
-          <select x-model="compare.metric">
-            <option value="throughput_tok_s">Throughput (tok/s)</option>
-            <option value="avg_latency_ms">Avg Latency</option>
-            <option value="p95_latency_ms">P95 Latency</option>
-            <option value="avg_ttft_ms">TTFT</option>
-          </select>
-        </label>
-        <label>Prompt
-          <select x-model="compare.prompt_key">
-            <option value="short">Short</option>
-            <option value="medium">Medium</option>
-            <option value="long">Long</option>
-            <option value="coding">Coding</option>
-          </select>
-        </label>
-        <button class="btn btn-primary" @click="runCompare()" :disabled="!canCompare">
-          <span>📊</span> Compare
-        </button>
-      </div>
-
-      <!-- Delta table -->
-      <table class="results-table" x-show="compareResult.rows?.length">
-        <thead>
-          <tr><th>Concurrency</th><th x-text="compareResult.server_a_alias">A</th><th x-text="compareResult.server_b_alias">B</th><th>Δ</th><th>Δ %</th></tr>
-        </thead>
-        <tbody>
-          <template x-for="row in compareResult.rows" :key="row.concurrency">
-            <tr>
-              <td x-text="row.concurrency"></td>
-              <td class="mono-val" x-text="row.value_a?.toFixed(1) || '—'"></td>
-              <td class="mono-val" x-text="row.value_b?.toFixed(1) || '—'"></td>
-              <td class="mono-val" :class="row.delta > 0 ? 'delta-pos' : (row.delta < 0 ? 'delta-neg' : '')" x-text="row.delta != null ? (row.delta > 0 ? '+' : '') + row.delta.toFixed(1) : '—'"></td>
-              <td class="mono-val" :class="row.delta_pct > 0 ? 'delta-pos' : (row.delta_pct < 0 ? 'delta-neg' : '')" x-text="row.delta_pct != null ? (row.delta_pct > 0 ? '+' : '') + row.delta_pct.toFixed(1) + '%' : '—'"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-
-      <!-- Compare chart -->
-      <div class="chart-wrap chart-wide" x-show="compareResult.rows?.length">
-        <div class="chart-title">Comparison by Concurrency</div>
-        <canvas id="chart-compare"></canvas>
+      <!-- Server / Run selection -->
+      <div class="compare-select-grid">
+        <div class="compare-select-col">
+          <h4 class="compare-col-title" style="color: var(--accent);">Server A</h4>
+          <label>Server
+            <select x-model="compare.serverA" @change="loadCompareRuns('A')">
+              <option value="">— select —</option>
+              <template x-for="s in servers" :key="s.alias">
+                <option :value="s.alias" x-text="s.alias"></option>
+              </template>
+            </select>
+          </label>
+          <label>Run
+            <select x-model="compare.runA">
+              <option value="">— select run —</option>
+              <template x-for="r in compare.runsA" :key="r.run_id">
+                <option :value="r.run_id" x-text="formatTimestamp(r.timestamp) + ' · ' + r.model"></option>
+              </template>
+            </select>
+          </label>
+        </div>
+        <div class="compare-vs">VS</div>
+        <div class="compare-select-col">
+          <h4 class="compare-col-title" style="color: var(--accent-blue);">Server B</h4>
+          <label>Server
+            <select x-model="compare.serverB" @change="loadCompareRuns('B')">
+              <option value="">— select —</option>
+              <template x-for="s in servers" :key="s.alias">
+                <option :value="s.alias" x-text="s.alias"></option>
+              </template>
+            </select>
+          </label>
+          <label>Run
+            <select x-model="compare.runB">
+              <option value="">— select run —</option>
+              <template x-for="r in compare.runsB" :key="r.run_id">
+                <option :value="r.run_id" x-text="formatTimestamp(r.timestamp) + ' · ' + r.model"></option>
+              </template>
+            </select>
+          </label>
+        </div>
       </div>
     </div>
+
+    <!-- Full comparison results -->
+    <template x-if="compareFullResult && compareFullResult.prompt_keys">
+      <div>
+        <!-- Run info banner -->
+        <div class="compare-run-info">
+          <div class="compare-run-info-item">
+            <span class="compare-label">A:</span>
+            <span class="compare-value" x-text="compareFullResult.run_a.server_alias"></span>
+            <span class="compare-meta" x-text="compareFullResult.run_a.model"></span>
+            <span class="compare-meta" x-text="formatTimestamp(compareFullResult.run_a.timestamp)"></span>
+          </div>
+          <div class="compare-run-info-item">
+            <span class="compare-label">B:</span>
+            <span class="compare-value" x-text="compareFullResult.run_b.server_alias"></span>
+            <span class="compare-meta" x-text="compareFullResult.run_b.model"></span>
+            <span class="compare-meta" x-text="formatTimestamp(compareFullResult.run_b.timestamp)"></span>
+          </div>
+        </div>
+
+        <!-- Per prompt-key comparison cards -->
+        <template x-for="pk in compareFullResult.prompt_keys" :key="pk">
+          <div class="panel compare-prompt-card">
+            <div class="panel-header">
+              <h3 x-text="_promptLabel(pk)"></h3>
+            </div>
+
+            <!-- Metrics table per concurrency -->
+            <template x-for="conc in _getCompareConcs(pk)" :key="conc">
+              <div class="compare-conc-block">
+                <div class="compare-conc-label">Concurrency: <strong x-text="conc"></strong></div>
+                <table class="results-table compare-detail-table">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      <th x-text="compareFullResult.run_a.server_alias">A</th>
+                      <th x-text="compareFullResult.run_b.server_alias">B</th>
+                      <th>Δ</th>
+                      <th>Δ %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="mr in _getCompareMetrics(pk, conc)" :key="mr.metric">
+                      <tr>
+                        <td x-text="_metricLabel(mr.metric)"></td>
+                        <td class="mono-val" x-text="mr.value_a != null ? mr.value_a.toFixed(1) : '—'"></td>
+                        <td class="mono-val" x-text="mr.value_b != null ? mr.value_b.toFixed(1) : '—'"></td>
+                        <td class="mono-val"
+                            :class="mr.metric === 'throughput_tok_s' ? (mr.delta > 0 ? 'delta-pos' : (mr.delta < 0 ? 'delta-neg' : '')) : (mr.delta < 0 ? 'delta-pos' : (mr.delta > 0 ? 'delta-neg' : ''))"
+                            x-text="mr.delta != null ? (mr.delta > 0 ? '+' : '') + mr.delta.toFixed(1) : '—'"></td>
+                        <td class="mono-val"
+                            :class="mr.metric === 'throughput_tok_s' ? (mr.delta_pct > 0 ? 'delta-pos' : (mr.delta_pct < 0 ? 'delta-neg' : '')) : (mr.delta_pct < 0 ? 'delta-pos' : (mr.delta_pct > 0 ? 'delta-neg' : ''))"
+                            x-text="mr.delta_pct != null ? (mr.delta_pct > 0 ? '+' : '') + mr.delta_pct.toFixed(1) + '%' : '—'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <!-- Chart for this prompt type -->
+            <div class="chart-wrap chart-wide">
+              <canvas :id="'chart-compare-' + pk"></canvas>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
   </div>
 
   <!-- ════════ BACKUP TAB ════════ -->

@@ -21,6 +21,13 @@ router = APIRouter(prefix="/api/benchmark", tags=["benchmark"])
 _active_tasks: dict[str, dict[str, Any]] = {}
 
 
+@router.get("/prompts")
+async def list_prompts():
+    """Return available prompt definitions from prompts.md for the UI."""
+    from core.prompt_loader import get_prompt_options
+    return get_prompt_options()
+
+
 @router.post("/start")
 async def start_benchmark(config: BenchmarkConfig, request: Request):
     """Start a benchmark run. Returns {run_id}."""

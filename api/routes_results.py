@@ -82,6 +82,89 @@ async def compare_runs(
     }
 
 
+@router.get("/compare/full")
+async def compare_runs_full(
+    request: Request,
+    run_a_id: str = Query(...),
+    run_b_id: str = Query(...),
+):
+    """Full comparison of two runs — all prompt keys, all metrics, all concurrency levels."""
+    from core.db import run_get, result_list
+    db = request.state.db
+    run_a = await run_get(db, run_a_id)
+    run_b = await run_get(db, run_b_id)
+    if not run_a:
+        raise HTTPException(status_code=404, detail=f"Run '{run_a_id}' not found")
+    if not run_b:
+        raise HTTPException(status_code=404, detail=f"Run '{run_b_id}' not found")
+
+    results_a = await result_list(db, run_a_id)
+    results_b = await result_list(db, run_b_id)
+
+    metrics = ["throughput_tok_s", "avg_latency_ms", "p50_latency_ms", "p95_latency_ms", "avg_ttft_ms"]
+
+    # Group results by prompt_key
+    def group_by_prompt(results):
+        grouped = {}
+        for r in results:
+            pk = r["prompt_key"]
+            if pk not in grouped:
+                grouped[pk] = {}
+            grouped[pk][r["concurrency"]] = r
+        return grouped
+
+    a_grouped = group_by_prompt(results_a)
+    b_grouped = group_by_prompt(results_b)
+
+    all_prompt_keys = sorted(set(list(a_grouped.keys()) + list(b_grouped.keys())))
+
+    comparisons = {}
+    for pk in all_prompt_keys:
+        a_by_conc = a_grouped.get(pk, {})
+        b_by_conc = b_grouped.get(pk, {})
+        all_conc = sorted(set(list(a_by_conc.keys()) + list(b_by_conc.keys())))
+
+        conc_data = {}
+        for conc in all_conc:
+            ra = a_by_conc.get(conc)
+            rb = b_by_conc.get(conc)
+            metric_rows = []
+            for m in metrics:
+                val_a = ra.get(m) if ra else None
+                val_b = rb.get(m) if rb else None
+                delta = None
+                delta_pct = None
+                if val_a is not None and val_b is not None:
+                    delta = round(val_a - val_b, 2)
+                    if val_b != 0:
+                        delta_pct = round((delta / abs(val_b)) * 100, 1)
+                metric_rows.append({
+                    "metric": m,
+                    "value_a": round(val_a, 2) if val_a is not None else None,
+                    "value_b": round(val_b, 2) if val_b is not None else None,
+                    "delta": delta,
+                    "delta_pct": delta_pct,
+                })
+            conc_data[conc] = metric_rows
+        comparisons[pk] = conc_data
+
+    # Extract run metadata
+    def run_meta(run):
+        return {
+            "run_id": run["run_id"],
+            "server_alias": run["server_alias"],
+            "model": run["model"],
+            "timestamp": run["timestamp"],
+        }
+
+    return {
+        "run_a": run_meta(run_a),
+        "run_b": run_meta(run_b),
+        "comparisons": comparisons,
+        "prompt_keys": all_prompt_keys,
+    }
+
+
 # ── Per-run routes (/{run_id}) ────────────────────────────────────────────────
 
 @router.get("/{run_id}")

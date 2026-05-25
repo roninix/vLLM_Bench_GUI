@@ -109,13 +109,14 @@ function createApp() {
     },
 
     /* ── Benchmark ─────────────────────────────────────── */
+    availablePrompts: [],  // loaded from /api/benchmark/prompts
     bench: {
       server_alias: '',
       model: '',
       models: [],
       concurrency_levels: [1, 2, 4],
       custom_concurrency: '',
-      prompt_keys: ['short', 'medium', 'long', 'coding'],
+      prompt_keys: [],
       num_requests: 8,
       temperature: 0.0,
       quick_mode: false,
@@ -143,11 +144,9 @@ function createApp() {
       serverA: '', serverB: '',
       runA: '', runB: '',
       runsA: [], runsB: [],
-      metric: 'throughput_tok_s',
-      prompt_key: 'medium',
     },
-    compareResult: { rows: [], server_a_alias: '', server_b_alias: '' },
-    _compareChart: null,
+    compareFullResult: null,
+    _compareCharts: {},
 
     /* ── Backup ────────────────────────────────────────── */
     backups: [],
@@ -196,6 +195,7 @@ function createApp() {
     init: function () {
       var self = this;
       this.loadServers();
+      this.loadPrompts();
       // Initialize theme
       this.currentTheme = getStoredTheme();
       setTheme(this.currentTheme);
@@ -213,8 +213,6 @@ function createApp() {
           if (self.benchRunning) self.stopBenchmark();
         }
       });
-      // Auto-ping loop
-      setInterval(function () { self.autoPing(); }, 30000);
     },
 
     /* ════════════ Server methods ════════════ */
@@ -224,6 +222,21 @@ function createApp() {
       try {
         this.servers = await api('/servers');
       } catch (e) { toast('Failed to load servers: ' + e.message, 'error'); }
+    },
+
+    loadPrompts: async function () {
+      try {
+        var prompts = await api('/benchmark/prompts');
+        this.availablePrompts = prompts;
+        // Auto-select first 4 non-custom prompts as defaults if nothing selected
+        if (this.bench.prompt_keys.length === 0) {
+          var defaults = prompts
+            .filter(function (p) { return p.key !== 'custom'; })
+            .slice(0, 4)
+            .map(function (p) { return p.key; });
+          this.bench.prompt_keys = defaults;
+        }
+      } catch (e) { toast('Failed to load prompts: ' + e.message, 'error'); }
     },
 
     openServerDialog: function (server) {
@@ -323,12 +336,7 @@ function createApp() {
       } catch (e) { toast(e.message, 'error'); }
     },
 
-    autoPing: async function () {
-      for (var i = 0; i < Math.min(3, this.servers.length); i++) {
-        try { await api('/servers/' + this.servers[i].alias + '/ping'); } catch (e) { /* ignore */ }
-      }
-      await this.loadServers();
-    },
+
 
     /* ════════════ Benchmark methods ════════════ */
 
@@ -667,58 +675,99 @@ function createApp() {
     runCompare: async function () {
       try {
         var params = 'run_a_id=' + encodeURIComponent(this.compare.runA) +
-                     '&run_b_id=' + encodeURIComponent(this.compare.runB) +
-                     '&prompt_key=' + encodeURIComponent(this.compare.prompt_key) +
-                     '&metric=' + encodeURIComponent(this.compare.metric);
-        this.compareResult = await api('/results/compare?' + params);
+                     '&run_b_id=' + encodeURIComponent(this.compare.runB);
+        this.compareFullResult = await api('/results/compare/full?' + params);
         var self = this;
         this.$nextTick(function () {
-          self._renderCompareChart();
+          self._renderCompareCharts();
         });
       } catch (e) { toast('Compare failed: ' + e.message, 'error'); }
     },
 
-    _renderCompareChart: function () {
-      if (this._compareChart) { try { this._compareChart.destroy(); } catch (e) { /* ignore */ } }
-      var canvas = document.getElementById('chart-compare');
-      if (!canvas || typeof Chart === 'undefined') return;
+    _metricLabel: function (m) {
+      var labels = {
+        'throughput_tok_s': 'Throughput (tok/s)',
+        'avg_latency_ms': 'Avg Latency (ms)',
+        'p50_latency_ms': 'P50 Latency (ms)',
+        'p95_latency_ms': 'P95 Latency (ms)',
+        'avg_ttft_ms': 'TTFT (ms)',
+      };
+      return labels[m] || m;
+    },
 
-      var rows = this.compareResult.rows || [];
-      var labels = rows.map(function (r) { return 'c=' + r.concurrency; });
-      var metricLabel = this.compare.metric.replace('_tok_s', ' tok/s').replace(/_/g, ' ');
+    _promptLabel: function (pk) {
+      for (var i = 0; i < this.availablePrompts.length; i++) {
+        if (this.availablePrompts[i].key === pk) return this.availablePrompts[i].label;
+      }
+      return pk;
+    },
+
+    _getCompareConcs: function (pk) {
+      if (!this.compareFullResult || !this.compareFullResult.comparisons[pk]) return [];
+      return Object.keys(this.compareFullResult.comparisons[pk]).map(Number).sort(function (a, b) { return a - b; });
+    },
+
+    _getCompareMetrics: function (pk, conc) {
+      if (!this.compareFullResult || !this.compareFullResult.comparisons[pk]) return [];
+      return this.compareFullResult.comparisons[pk][conc] || [];
+    },
+
+    _renderCompareCharts: function () {
+      // Destroy old charts
+      var self = this;
+      Object.keys(this._compareCharts).forEach(function (key) {
+        try { self._compareCharts[key].destroy(); } catch (e) { /* ignore */ }
+      });
+      this._compareCharts = {};
+
+      if (!this.compareFullResult || !this.compareFullResult.prompt_keys) return;
+      if (typeof Chart === 'undefined') return;
 
       var colorA = this._getServerColor(this.compare.serverA);
       var colorB = this._getServerColor(this.compare.serverB);
+      var aliasA = this.compareFullResult.run_a.server_alias;
+      var aliasB = this.compareFullResult.run_b.server_alias;
 
-      this._compareChart = new Chart(canvas, {
-        type: 'bar',
-        data: {
-          labels: labels,
-          datasets: [
-            {
-              label: this.compareResult.server_a_alias,
-              data: rows.map(function (r) { return r.value_a || 0; }),
-              backgroundColor: colorA + 'cc',
-            },
-            {
-              label: this.compareResult.server_b_alias,
-              data: rows.map(function (r) { return r.value_b || 0; }),
-              backgroundColor: colorB + 'cc',
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { labels: { color: '#e8e8e8' } },
-            title: { display: true, text: metricLabel + ' — ' + this.compare.prompt_key, color: '#e8e8e8' },
+      this.compareFullResult.prompt_keys.forEach(function (pk) {
+        var canvas = document.getElementById('chart-compare-' + pk);
+        if (!canvas) return;
+
+        var concs = Object.keys(self.compareFullResult.comparisons[pk]).map(Number).sort(function (a, b) { return a - b; });
+        var labels = concs.map(function (c) { return 'c=' + c; });
+
+        var dataA = concs.map(function (c) {
+          var metrics = self.compareFullResult.comparisons[pk][c] || [];
+          var tp = metrics.find(function (m) { return m.metric === 'throughput_tok_s'; });
+          return tp ? (tp.value_a || 0) : 0;
+        });
+        var dataB = concs.map(function (c) {
+          var metrics = self.compareFullResult.comparisons[pk][c] || [];
+          var tp = metrics.find(function (m) { return m.metric === 'throughput_tok_s'; });
+          return tp ? (tp.value_b || 0) : 0;
+        });
+
+        self._compareCharts[pk] = new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: aliasA, data: dataA, backgroundColor: colorA + 'cc' },
+              { label: aliasB, data: dataB, backgroundColor: colorB + 'cc' },
+            ],
           },
-          scales: {
-            x: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
-            y: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { color: '#e8e8e8' } },
+              title: { display: true, text: self._promptLabel(pk) + ' — Throughput', color: '#e8e8e8' },
+            },
+            scales: {
+              x: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
+              y: { ticks: { color: '#666' }, grid: { color: '#2a2a2a' } },
+            },
           },
-        },
+        });
       });
     },
 

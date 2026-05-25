@@ -6,6 +6,7 @@ import json
 import statistics
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Awaitable
 
 import aiohttp
@@ -13,47 +14,12 @@ import aiohttp
 from core.models import BenchmarkConfig, ProgressEvent, ResultEvent
 
 
-# ── Prompt library ────────────────────────────────────────────────────────────
+from core.prompt_loader import load_prompts
 
-PROMPTS = {
-    "short": {
-        "prompt": "What is 2+2? Answer in one sentence.",
-        "max_tokens": 50,
-        "label": "Short (~50 tok)",
-    },
-    "medium": {
-        "prompt": (
-            "Explain the difference between TCP and UDP networking protocols. "
-            "Include key characteristics, use cases, and trade-offs."
-        ),
-        "max_tokens": 512,
-        "label": "Medium (~512 tok)",
-    },
-    "long": {
-        "prompt": (
-            "Write a comprehensive technical analysis of MoE (Mixture of Experts) "
-            "architecture in large language models. Cover: what it is, how routing works, "
-            "why it's efficient, key implementations (Switch Transformer, Mixtral, etc.), "
-            "training challenges, and inference optimization techniques."
-        ),
-        "max_tokens": 2048,
-        "label": "Long (~2K tok)",
-    },
-    "coding": {
-        "prompt": (
-            "Write a Python implementation of a binary search tree with "
-            "insert, search, delete, and in-order traversal methods. "
-            "Include proper error handling and docstrings."
-        ),
-        "max_tokens": 1024,
-        "label": "Code (~1K tok)",
-    },
-    "custom": {
-        "prompt": "",
-        "max_tokens": 256,
-        "label": "Custom",
-    },
-}
+
+def get_prompts() -> dict:
+    """Return current prompt library (auto-reloads from prompts.md on change)."""
+    return load_prompts()
 
 
 # ── Internal data classes ─────────────────────────────────────────────────────
@@ -67,6 +33,7 @@ class RequestResult:
     ttft_ms: float = 0.0
     success: bool = True
     error: str = ""
+    completion_text: str = ""
 
 
 @dataclass
@@ -188,6 +155,8 @@ async def _call_vllm(
         if result.completion_tokens == 0 and completion_text:
             result.completion_tokens = len(completion_text.split())
 
+        result.completion_text = completion_text
+
     except asyncio.TimeoutError:
         result.success = False
         result.error = "Timeout"
@@ -269,7 +238,8 @@ async def run_benchmark(
     success_requests_count = 0
 
     for prompt_key in config.prompt_keys:
-        prompt_cfg = PROMPTS.get(prompt_key, PROMPTS["custom"])
+        prompts = get_prompts()
+        prompt_cfg = prompts.get(prompt_key, prompts.get("custom", {"prompt": "", "max_tokens": 256, "label": "Custom"}))
         # Merge custom prompt overrides
         if prompt_key == "custom" and config.custom_prompts.get("custom"):
             custom = config.custom_prompts["custom"]
@@ -304,13 +274,15 @@ async def run_benchmark(
 
                 async def bounded_call():
                     async with semaphore:
+                        # Per-prompt temperature override (from prompts.md) or global config
+                        temp = prompt_cfg.get("temperature", config.temperature)
                         return await _call_vllm(
                             session,
                             base_url,
                             config.model,
                             prompt_cfg["prompt"],
                             prompt_cfg["max_tokens"],
-                            config.temperature,
+                            temp,
                             timeout_s,
                         )
 
@@ -393,6 +365,46 @@ async def run_benchmark(
                 for r in lr.results
             ],
         })
+
+    # ── Save Q&A responses to JSON file ──────────────────────────────────────
+    qa_entries = []
+    for lr in all_results:
+        prompts_dict = get_prompts()
+        pcfg = prompts_dict.get(lr.prompt_key, {})
+        prompt_text = pcfg.get("prompt", "")
+        for idx, r in enumerate(lr.results):
+            if r.success and r.completion_text:
+                qa_entries.append({
+                    "prompt_key": lr.prompt_key,
+                    "concurrency": lr.concurrency,
+                    "request_index": idx,
+                    "question": prompt_text,
+                    "answer": r.completion_text,
+                    "max_tokens": pcfg.get("max_tokens", 0),
+                    "completion_tokens": r.completion_tokens,
+                    "latency_ms": round(r.latency_ms, 1),
+                })
+
+    if qa_entries:
+        responses_dir = Path(__file__).parent.parent / "data" / "responses"
+        responses_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        safe_model = config.model.replace("/", "_").replace(" ", "_")[:40]
+        safe_alias = config.server_alias.replace("/", "_").replace(" ", "_")
+        filename = f"responses_{safe_alias}_{safe_model}_{ts}.json"
+
+        qa_doc = {
+            "server_alias": config.server_alias,
+            "model": config.model,
+            "temperature": config.temperature,
+            "timestamp": ts,
+            "total_qa_pairs": len(qa_entries),
+            "responses": qa_entries,
+        }
+
+        filepath = responses_dir / filename
+        filepath.write_text(json.dumps(qa_doc, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {
         "peak_tok_s": round(peak_tok_s, 1),

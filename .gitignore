@@ -39,6 +39,7 @@ Thumbs.db
 # Data (sensitive user data)
 .vllm_bench/bench.db
 .vllm_bench/*.db
+data/responses/
 backups/
 *.zip
 
